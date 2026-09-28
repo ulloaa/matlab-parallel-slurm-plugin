@@ -42,25 +42,75 @@ if jobInTerminalState
     end
 end
 
-[schedulerIDs, numSubmittedTasks] = getSimplifiedSchedulerIDsForJob(job);
+stateQueryInterval = validatedPropValue( ...
+    cluster.AdditionalProperties, ...
+    'StateQueryIntervalSeconds', ...
+    'numeric', ...
+    0);
 
-jobList = strjoin(schedulerIDs, ',');
-commandToRun = sprintf('squeue -j %s --states=all --Format=jobarrayid,state --noheader --array', jobList);
-dctSchedulerMessage(4, '%s: Querying cluster for job state using command:\n\t%s', currFilename, commandToRun);
-
-try
-    % We will ignore the status returned from the state command because
-    % a non-zero status is returned if the job no longer exists
-    [~, cmdOut] = runSchedulerCommand(cluster, commandToRun);
-catch err
-    ex = MException('parallelexamples:GenericSLURM:FailedToGetJobState', ...
-        'Failed to get job state from cluster.');
-    ex = ex.addCause(err);
-    throw(ex);
+if ~isscalar(stateQueryInterval) || ...
+        ~isfinite(stateQueryInterval) || ...
+        stateQueryInterval < 0
+    error('parallelexamples:GenericSLURM:IncorrectArguments', ...
+        'StateQueryIntervalSeconds must be a finite, nonnegative scalar.');
 end
 
-clusterState = iExtractJobState(cmdOut, numSubmittedTasks);
-dctSchedulerMessage(6, '%s: State %s was extracted from cluster output.', currFilename, clusterState);
+currentTime = posixtime(datetime('now','TimeZone','UTC'));
+
+useCachedState = false;
+
+if stateQueryInterval > 0 && ...
+        isfield(data, 'LastStateQueryTime') && ...
+        isfield(data, 'LastSchedulerState')
+
+    elapsedSeconds = currentTime - data.LastStateQueryTime;
+
+    if elapsedSeconds < stateQueryInterval
+        clusterState = data.LastSchedulerState;
+        useCachedState = true;
+
+        dctSchedulerMessage(6, ...
+            '%s: Using cached state %s for job %d. Last scheduler query was %.1f seconds ago.', ...
+            currFilename, clusterState, job.ID, elapsedSeconds);
+    end
+end
+
+if ~useCachedState
+    [schedulerIDs, numSubmittedTasks] = getSimplifiedSchedulerIDsForJob(job);
+
+    jobList = strjoin(schedulerIDs, ',');
+    commandToRun = sprintf( ...
+        'squeue -j %s --states=all --Format=jobarrayid,state --noheader --array', ...
+        jobList);
+
+    dctSchedulerMessage(4, ...
+        '%s: Querying cluster for job state using command:\n\t%s', ...
+        currFilename, commandToRun);
+
+    try
+        % Ignore the status because squeue returns nonzero when a job
+        % is no longer present.
+        [~, cmdOut] = runSchedulerCommand(cluster, commandToRun);
+    catch err
+        ex = MException( ...
+            'parallelexamples:GenericSLURM:FailedToGetJobState', ...
+            'Failed to get job state from cluster.');
+        ex = ex.addCause(err);
+        throw(ex);
+    end
+
+    clusterState = iExtractJobState(cmdOut, numSubmittedTasks);
+
+    dctSchedulerMessage(6, ...
+        '%s: State %s was extracted from cluster output.', ...
+        currFilename, clusterState);
+
+    if stateQueryInterval > 0
+        data.LastStateQueryTime = currentTime;
+        data.LastSchedulerState = clusterState;
+        cluster.setJobClusterData(job, data);
+    end
+end
 
 % If we could determine the cluster's state, we'll use that. Otherwise, we assume
 % the scheduler is no longer tracking the job because the job has terminated.

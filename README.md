@@ -96,6 +96,18 @@ You can use `AdditionalProperties` to modify the behaviour of the `Generic` clus
 For a full list of the `AdditionalProperties` supported by the plugin scripts in this repository, see [Customize Behavior of Sample Plugin Scripts](https://www.mathworks.com/help/matlab-parallel-server/customize-behavior-of-sample-plugin-scripts.html).
 By modifying the plugins, you can add support for your own custom `AdditionalProperties`.
 
+#### Throttle Slurm Job-State Queries
+
+To limit how frequently the plugin calls `squeue`, set a minimum job-state query interval in seconds:
+
+```matlab
+c.AdditionalProperties.StateQueryIntervalSeconds = 120;
+```
+
+When this property is greater than zero, the plugin caches the last scheduler state and does not call `squeue` again until the configured interval has elapsed. The default value is `0`, which preserves the existing unthrottled behavior.
+
+A longer interval reduces scheduler-query load but can delay reporting job-state changes by up to the configured interval.
+
 #### Connect to a Remote Cluster
 
 To manage work on the cluster, MATLAB calls the Slurm command line utilities.
